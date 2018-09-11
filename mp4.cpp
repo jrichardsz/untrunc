@@ -276,9 +276,10 @@ void Mp4::analyze() {
 				hitEnterToContinue();
 			}
 			//assert(matches);
-			cout << "detected size: " << size << " true: " << track.sizes_[i] << '\n'
-			     << "detected duration: " << duration << " true: " << track.times_[i] << '\n';
-			if(size != track.sizes_[i] || duration != track.times_[i]){
+			cout << "detected size: " << size << " true: " << track.sizes_[i] << '\n';
+			if (track.codec_.name_ == "mp4a")
+				 cout << "detected duration: " << duration << " true: " << track.times_[i] << '\n';
+			if (size != track.sizes_[i] || (track.codec_.name_ == "mp4a" && duration != track.times_[i])) {
 				cout << "detected size or duration are wrong!";
 				hitEnterToContinue();
 			}
