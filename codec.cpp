@@ -53,14 +53,14 @@ void Codec::parse(Atom *trak, vector<int> &offsets, Atom *mdat) {
 		else
 			logg(I, "avcC got decoded\n");
 	}
-	else if (codec == string("mp4a")) {
-		audio_config_ = new AudioConfig(*stsd);
-		if (!audio_config_->is_ok)
-			logg(W, "audio-config (esds) was not decoded correctly\n");
-		else
-			logg(I, "audio-config (esds) got decoded\n");
-//		exit(1);
-	}
+//	else if (codec == string("mp4a")) {
+//		audio_config_ = new AudioConfig(*stsd);
+//		if (!audio_config_->is_ok)
+//			logg(W, "audio-config (esds) was not decoded correctly\n");
+//		else
+//			logg(I, "audio-config (esds) got decoded\n");
+////		exit(1);
+//	}
 
 	//this was a stupid attempt at trying to detect packet type based on bitmasks
 	mask1_ = 0xffffffff;
@@ -87,7 +87,7 @@ void Codec::parse(Atom *trak, vector<int> &offsets, Atom *mdat) {
 	}
 }
 
-bool Codec::matchSample(const uchar *start) {
+bool Codec::matchSample(const uchar *start) const{
 	int s = swap32(*(int *)start);
 	if(name_ == "avc1") {
 
@@ -200,7 +200,7 @@ bool Codec::matchSample(const uchar *start) {
 	return false;
 }
 
-int Codec::getLength(const uchar *start, uint maxlength, int &duration) {
+int Codec::getSize(const uchar *start, uint maxlength, int &duration) {
 	if(name_ == "mp4a" || name_ == "sawb") {
 		AVFrame *frame = av_frame_alloc();
 		if(!frame)
@@ -215,6 +215,26 @@ int Codec::getLength(const uchar *start, uint maxlength, int &duration) {
 		int consumed = avcodec_decode_audio4(context_, frame, &got_frame, &avp);
 		duration = frame->nb_samples;
 		logg(V, "nb_samples: ", duration, '\n');
+
+//		static uint max = 0;
+//		static uint min = 102400;
+//		if (consumed > max){
+//			max = consumed;
+//			cout << "new max:" << max << '\n';
+//		}
+//		if (consumed < min){
+//			min = consumed;
+//			cout << "-- new min:" << min << '\n';
+//		}
+//		static bool done = false;
+//		if(!done){
+//			cout << "buffer:\n";
+//			printBuffer(start, 30);
+//			cout << "packet.size: " << avp.size << '\n';
+//			cout << "packet.duration: " << avp.duration << '\n';
+//			cout << "consumed: " << consumed << '\n';
+//			done=true;
+//		}
 
 		av_freep(&frame);
 		return consumed;
@@ -287,7 +307,7 @@ int Codec::getLength(const uchar *start, uint maxlength, int &duration) {
 
 		SliceInfo previous_slice;
 		NalInfo previous_nal;
-		last_frame_was_idr_ = false;
+		was_keyframe = false;
 
 		while(1) {
 			logg(V, "---\n");
@@ -311,7 +331,7 @@ int Codec::getLength(const uchar *start, uint maxlength, int &duration) {
 					break;
 				return length;
 			case NAL_IDR_SLICE:
-				last_frame_was_idr_ = true; // keyframe
+				was_keyframe = true; // keyframe
 			case NAL_SLICE:
 			{
 				SliceInfo slice_info(nal_info, sps_info);

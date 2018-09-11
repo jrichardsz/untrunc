@@ -169,16 +169,14 @@ void Mp4::saveVideo(const string& filename) {
 	  assumes offsets in stco are absolute and so to find the relative just subtrack mdat->start + 8
 */
 
-	duration_ = 0;
+//	duration_ = 0;
 	for(Track& track : tracks_) {
 		track.writeToAtoms();
-		//convert to movie timescale
-//		cout << "Track duration: " << track.duration_ << " movie timescale: " << timescale_ << " track timescale: " << track.timescale_ << endl;
-		int track_duration = (int)(double)track.duration_ * ((double)timescale_ / (double)track.timescale_);
-		if(track_duration > duration_) duration_ = track_duration;
+		Atom *tkhd = track.trak_->atomByName("tkhd");
+		tkhd->writeInt(track.duration_in_timescale_, 20); //in movie timescale, not track timescale
 
 		int hour, min, sec, msec;
-		int bmsec = track.duration_ / (track.timescale_ / 1000);
+		int bmsec = track.getDurationInMs();
 		auto x = div(bmsec, 1000); msec = x.rem; sec = x.quot;
 		x = div(sec, 60); sec = x.rem; min = x.quot;
 		x = div(min, 60); min = x.rem; hour = x.quot;
@@ -187,12 +185,10 @@ void Mp4::saveVideo(const string& filename) {
 		string s_min = (min?to_string(min)+"min ":"");
 		string s_hour = (hour?to_string(hour)+"h ":"");
 		logg(I, "Duration of ", track.codec_.name_, ": ", s_hour, s_min, s_sec, s_msec, " (", bmsec, " ms)\n");
-
-		Atom *tkhd = track.trak_->atomByName("tkhd");
-		tkhd->writeInt(track_duration, 20); //in movie timescale, not track timescale
 	}
 	logg(I, "saving ", filename, '\n');
 	Atom *mvhd = root_atom_->atomByName("mvhd");
+	cout << "duration: " << duration_ << '\n';
 	mvhd->writeInt(duration_, 16);
 
 
@@ -234,21 +230,20 @@ void Mp4::analyze() {
 
 	Atom *mdat = root_atom_->atomByName("mdat");
 	for(unsigned int i = 0; i < tracks_.size(); i++) {
-		cout << "\n\n Track " << i << endl;
 		Track &track = tracks_[i];
+		cout << "\nTrack " << i << " codec: " << track.codec_.name_ << endl;
 
-		cout << "Track codec: " << track.codec_.name_ << endl;
+//		cout << "Keyframes  " << track.keyframes_.size() << endl;
+//		for(unsigned int i = 0; i < track.keyframes_.size(); i++) {
+//			int k = track.keyframes_[i];
+//			int offset = track.offsets_[k] - (mdat->start_ + 8);
+//			int begin =  mdat->readInt(offset);
+//			int next =  mdat->readInt(offset + 4);
+//			cout << "\n" << k << " Size: " << track.sizes_[k] << " offset " << track.offsets_[k]
+//			        << "  begin: " << hex << begin << " " << next << dec << endl;
+//		}
 
-		cout << "Keyframes  " << track.keyframes_.size() << endl;
-		for(unsigned int i = 0; i < track.keyframes_.size(); i++) {
-			int k = track.keyframes_[i];
-			int offset = track.offsets_[k] - (mdat->start_ + 8);
-			int begin =  mdat->readInt(offset);
-			int next =  mdat->readInt(offset + 4);
-			cout << "\n" << k << " Size: " << track.sizes_[k] << " offset " << track.offsets_[k]
-					<< "  begin: " << hex << begin << " " << next << dec << endl;
-		}
-
+		int k = track.keyframes_.size() ? track.keyframes_[0] : -1, ik = 0;
 		for(unsigned int i = 0; i < track.offsets_.size(); i++) {
 			int offset = track.offsets_[i] - (mdat->start_ + 8);
 			uchar *start = &(mdat->content_[offset]);
@@ -257,22 +252,46 @@ void Mp4::analyze() {
 			int begin =  mdat->readInt(offset);
 			int next =  mdat->readInt(offset + 4);
 			int end = mdat->readInt(offset + track.sizes_[i] - 4);
-			cout << i << " Size: " << track.sizes_[i] << " offset " << track.offsets_[i]
-					<< "  begin: " << hex << begin << " " << next << " end: " << end << dec << endl;
+			cout << "\n(" << i << ") Size: " << track.sizes_[i] << " offset " << track.offsets_[i]
+			    << "  begin: " << mkHexStr(start, 4) << " " << mkHexStr(start+4, 4)
+			    << " end: " << mkHexStr(start+track.sizes_[i]-4, 4) << '\n';
+//			cout << "(" << i << ") Size: " << track.sizes_[i] << " offset " << track.offsets_[i]
+//			        << "  begin: " << hex << begin << " " << next << " end: " << end << dec << endl;
 
-			bool matches = track.codec_.matchSample(start);
+			bool matches = false;
+			for (const auto& t : tracks_)
+				if (t.codec_.matchSample(start)){
+					if (t.codec_.name_ != track.codec_.name_){
+						cout << "Matched wrong codec! " << t.codec_.name_ << "instead of " << track.codec_.name_;
+						hitEnterToContinue();
+					} else matches = true;
+				}
+//			bool matches = track.codec_.matchSample(start);
 			int duration = 0;
-			int length = track.codec_.getLength(start, maxlength, duration);
+			int size = track.codec_.getSize(start, maxlength, duration);
 			//TODO check if duration is working with the stts duration.
 
 			if(!matches) {
-				cout << "Match failed! Hit enter for next match." << endl;
-				getchar();
+				cout << "Match failed! " << track.codec_.name_ << " not detected";
+				hitEnterToContinue();
 			}
 			//assert(matches);
-			cout << "Length: " << length << " true length: " << track.sizes_[i] << endl;
-			if(length != track.sizes_[i])
-				getchar();
+			cout << "detected size: " << size << " true: " << track.sizes_[i] << '\n'
+			     << "detected duration: " << duration << " true: " << track.times_[i] << '\n';
+			if(size != track.sizes_[i] || duration != track.times_[i]){
+				cout << "detected size or duration are wrong!";
+				hitEnterToContinue();
+			}
+
+			if (k == i){
+				cout << "detected keyframe: " << track.codec_.was_keyframe  << " true: 1\n";
+				if (!track.codec_.was_keyframe){
+					cout << "keyframe not detected!";
+					hitEnterToContinue();
+				}
+				if (++ik < track.keyframes_.size())
+					k = track.keyframes_[ik];
+			}
 			//assert(length == track.sizes[i]);
 		}
 	}
@@ -394,7 +413,7 @@ void Mp4::repair(string& filename, const string& filename_fixed) {
 			int duration = 0;
 			if (tracks_.size() > 1 && !track.codec_.matchSample(start))
 				continue;
-			int length = track.codec_.getLength(start, maxlength, duration);
+			int length = track.codec_.getSize(start, maxlength, duration);
 			logg(V, "frame-length: ", length, '\n');
 			if(length < -1 || length > g_max_partsize) {
 				logg(E, "Invalid length: ", length, ". Wrong match in track: ", i, '\n');
@@ -411,7 +430,7 @@ void Mp4::repair(string& filename, const string& filename_fixed) {
 			if(length > 8)
 				logg(V, "- found as ", track.codec_.name_, '\n');
 
-			bool keyframe = track.codec_.last_frame_was_idr_;
+			bool keyframe = track.codec_.was_keyframe;
 			if(keyframe)
 				track.keyframes_.push_back(track.offsets_.size());
 			track.offsets_.push_back(offset);
@@ -451,11 +470,54 @@ void Mp4::repair(string& filename, const string& filename_fixed) {
 		cout << ")\n";
 	}
 
+	int audio_ms = 0; // duration in ms/1000
+	int video_ms = 0;
 	for(auto& track : tracks_) {
+		cout << track.codec_.name_ << ' ' << track.times_.size() << '\n';
 		if(audiotimes.size() == track.offsets_.size())
 			swap(audiotimes, track.times_);
-
+		cout << track.codec_.name_ << ' ' << track.times_.size() << '\n';
 		track.fixTimes();
+		int track_duration = (int)(double)track.duration_ * ((double)timescale_ / (double)track.timescale_);
+		if(track_duration > duration_) duration_ = track_duration;
+		track.duration_in_timescale_ = track_duration;
+
+		cout << track.codec_.name_ << ' ' << track.getDurationInMs() << '\n';
+		if(track.codec_.name_ == "mp4a") audio_ms = track.getDurationInMs();
+		if(track.codec_.name_ == "avc1") video_ms = track.getDurationInMs();
+	}
+	double ratio = ((double)audio_ms / video_ms);
+//	cout << video_ms << '\n';
+//	cout << audio_ms << '\n';
+//	cout << "ratio: " << ratio << '\n';
+	if (audio_ms && video_ms && ratio <= 0.92) {
+		if (!g_scale_audio) {
+			logg(W, "The audio stream is only ", ratio, " of the total length.\n",
+			string(9, ' '), "Use paramter '-s' to heuristicaly scale the stream\n");
+		} else {
+			Track& track = tracks_[0];
+			assert(track.codec_.name_ == "mp4a");
+			uint delta = video_ms - audio_ms;
+			delta *= track.timescale_/1000;
+//			delta *= tracks_[1].timescale_ / tracks_[0].timescale_;
+			uint parts = 400;
+			uint to_add = delta/parts;
+			cout << "to_add" << to_add << '\n';
+			uint interval = track.times_.size() / (parts+1); // dont scale the last audio last frame
+			cout << "track.duration: " << track.duration_ << '\n';
+			track.duration_ += to_add*parts;
+			cout << "track.duration: " << track.duration_ << '\n';
+			track.duration_in_timescale_ = (int)(double)track.duration_ * ((double)timescale_ / (double)track.timescale_);
+			cout << track.times_.size() << '\n';
+			for (int i=0; i < track.times_.size()-interval; ++i){
+				if (i % interval == 0)
+					track.times_[i] += to_add;
+//				cout << t.times_[i] << '\n';
+			}
+		}
+
+		cout << audio_ms << '\n';
+		cout << ratio << '\n';
 	}
 
 	Atom *original_mdat = root_atom_->atomByName("mdat");
